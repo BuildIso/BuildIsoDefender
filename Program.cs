@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -28,15 +28,18 @@ class Program
 
         Console.WriteLine($"Found {files.Count} file(s).\n");
 
-        string officialHash = await GetOfficialDigestFromAllReleases();
+        var allDigests = await GetAllDigestsFromReleases();
 
-        if (officialHash == null)
+        if (allDigests.Count == 0)
         {
-            Console.WriteLine("[ERROR] Unable to retrieve any official digest from GitHub.");
+            Console.WriteLine("[ERROR] No official digests found on GitHub.");
             return;
         }
 
-        Console.WriteLine($"Official SHA256: {officialHash}\n");
+        Console.WriteLine("Official versions found:");
+        foreach (var kv in allDigests)
+            Console.WriteLine($" - {kv.Key}: {kv.Value}");
+        Console.WriteLine();
 
         foreach (var file in files)
         {
@@ -48,13 +51,21 @@ class Program
             Console.WriteLine($"Local SHA256: {localHash}");
             Console.WriteLine($"Size: {size} bytes");
 
-            if (localHash.Equals(officialHash, StringComparison.OrdinalIgnoreCase))
+            bool match = false;
+
+            foreach (var kv in allDigests)
             {
-                Console.WriteLine("[STATUS] OFFICIAL — File is authentic.\n");
+                if (localHash.Equals(kv.Value, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"[STATUS] OFFICIAL — Matches version {kv.Key}\n");
+                    match = true;
+                    break;
+                }
             }
-            else
+
+            if (!match)
             {
-                Console.WriteLine("[STATUS] WARNING — File does NOT match the official version!");
+                Console.WriteLine("[STATUS] WARNING — File does NOT match ANY official version!");
 
                 if (size < 100_000)
                     Console.WriteLine("[THREAT] Possible phishing stub.");
@@ -93,27 +104,40 @@ class Program
         return results;
     }
 
-    static async Task<string> GetOfficialDigestFromAllReleases()
+    static async Task<Dictionary<string, string>> GetAllDigestsFromReleases()
     {
-        string[] urls = {
-            "https://api.github.com/repos/BuildIso/BuildIso/releases/tags/v2026.5",
-            "https://api.github.com/repos/BuildIso/BuildIso/releases/tags/v2026.4",
-            "https://api.github.com/repos/BuildIso/BuildIso/releases/tags/v2026.3",
-            "https://api.github.com/repos/BuildIso/BuildIso/releases/tags/v2026.2",
-            "https://api.github.com/repos/BuildIso/BuildIso/releases/tags/v2026.1"
+        string[] versions = {
+            "v2026.8",
+            "v2026.7",
+            "v2026.6",
+            "v2026.5",
+            "v2026.4",
+            "v2026.3",
+            "v2026.2",
+            "v2026.1"
         };
 
-        foreach (var url in urls)
+        var dict = new Dictionary<string, string>();
+
+        foreach (var version in versions)
         {
+            string url = $"https://api.github.com/repos/BuildIso/BuildIso/releases/tags/{version}";
+            Console.WriteLine($"Checking release: {url}");
+
             string digest = await GetDigestFromRelease(url);
-            if (digest != null)
+
+            if (!string.IsNullOrWhiteSpace(digest))
             {
-                Console.WriteLine($"Matched release: {url}");
-                return digest;
+                Console.WriteLine($" → Found digest for {version}\n");
+                dict[version] = digest;
+            }
+            else
+            {
+                Console.WriteLine($" → No digest for {version}\n");
             }
         }
 
-        return null;
+        return dict;
     }
 
     static async Task<string> GetDigestFromRelease(string url)
@@ -130,7 +154,7 @@ class Program
             {
                 string name = asset.GetProperty("name").GetString();
 
-                if (name == "BuildIso.exe")
+                if (name.Equals("BuildIso.exe", StringComparison.OrdinalIgnoreCase))
                 {
                     if (asset.TryGetProperty("digest", out var digestProp))
                     {
@@ -144,7 +168,7 @@ class Program
         }
         catch
         {
-            // ignore errors and continue to next URL
+            return null;
         }
 
         return null;
